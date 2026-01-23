@@ -22,6 +22,7 @@ const (
 	heroesURL        = "/heroes"
 	playerURL        = "/players/%d"
 	peersURL         = "/players/%d/peers"
+	playerMatchesURL = "/players/%d/matches"
 
 	telegramTokenEnv = "TELEGRAM_BOT_TOKEN"
 	telegramChatEnv  = "TELEGRAM_NOTIFY_CHAT_ID"
@@ -63,6 +64,12 @@ type peerEntry struct {
 	Personaname string `json:"personaname"`
 	WithGames   int    `json:"with_games"`
 	WithWin     int    `json:"with_win"`
+}
+
+type playerMatch struct {
+	MatchID    int64 `json:"match_id"`
+	PlayerSlot int   `json:"player_slot"`
+	RadiantWin bool  `json:"radiant_win"`
 }
 
 type telegramUpdate struct {
@@ -192,6 +199,15 @@ func fetchPeers(accountID int64) ([]peerEntry, error) {
 	return peers, nil
 }
 
+func fetchMatchesWith(accountID int64, includedAccountID int64, limit int) ([]playerMatch, error) {
+	var matches []playerMatch
+	url := fmt.Sprintf("%s"+playerMatchesURL+"?included_account_id=%d&limit=%d", baseURL, accountID, includedAccountID, limit)
+	if err := getJSON(url, &matches); err != nil {
+		return nil, err
+	}
+	return matches, nil
+}
+
 func getJSON(url string, out any) error {
 	client := &http.Client{Timeout: requestTimeout}
 	resp, err := client.Get(url)
@@ -293,14 +309,15 @@ func buildRatingTable(accountIDs []int64) (string, error) {
 	return builder.String(), nil
 }
 
-func buildFriendsTable(accountIDs []int64, limit int) (string, error) {
-	type friendEntry struct {
-		Name    string
+func buildBestFriendsTable(accountIDs []int64, limit int) (string, error) {
+	type bestFriendEntry struct {
+		Player  string
+		Friend  string
 		Winrate float64
 		Games   int
 	}
-	var builder strings.Builder
-	for idx, accountID := range accountIDs {
+	entries := make([]bestFriendEntry, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
 		player, err := fetchPlayerProfile(accountID)
 		if err != nil {
 			return "", err
@@ -309,50 +326,42 @@ func buildFriendsTable(accountIDs []int64, limit int) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		friends := make([]friendEntry, 0, len(peers))
+		sort.Slice(peers, func(i, j int) bool {
+			return peers[i].WithGames > peers[j].WithGames
+		})
+		if len(peers) > 20 {
+			peers = peers[:20]
+		}
+		best := bestFriendEntry{
+			Player: fallbackName(player.PersonaName),
+			Friend: "нет данных",
+		}
 		for _, p := range peers {
-			if p.WithGames <= 0 {
+			matches, err := fetchMatchesWith(accountID, p.AccountID, limit)
+			if err != nil {
+				return "", err
+			}
+			winrate, games := calcWinrateFromMatches(matches)
+			if games == 0 {
 				continue
 			}
-			name := strings.TrimSpace(p.Personaname)
-			if name == "" {
-				name = fmt.Sprintf("Account %d", p.AccountID)
+			if winrate > best.Winrate || (winrate == best.Winrate && games > best.Games) {
+				name := strings.TrimSpace(p.Personaname)
+				if name == "" {
+					name = fmt.Sprintf("Account %d", p.AccountID)
+				}
+				best.Friend = name
+				best.Winrate = winrate
+				best.Games = games
 			}
-			winrate := float64(p.WithWin) * 100 / float64(p.WithGames)
-			friends = append(friends, friendEntry{
-				Name:    name,
-				Winrate: winrate,
-				Games:   p.WithGames,
-			})
 		}
-		sort.Slice(friends, func(i, j int) bool {
-			if friends[i].Winrate == friends[j].Winrate {
-				return friends[i].Games > friends[j].Games
-			}
-			return friends[i].Winrate > friends[j].Winrate
-		})
+		entries = append(entries, best)
+	}
 
-		if limit > 0 && len(friends) > limit {
-			friends = friends[:limit]
-		}
-		name := fallbackName(player.PersonaName)
-		builder.WriteString(fmt.Sprintf("Игрок: %s\n", name))
-		builder.WriteString(fmt.Sprintf("%-3s  %-16s  %-9s  %-5s\n", "№", "Друг", "Winrate", "Игр"))
-		for i, f := range friends {
-			rank := fmt.Sprintf("%d", i+1)
-			switch i {
-			case 0:
-				rank = "🥇"
-			case 1:
-				rank = "🥈"
-			case 2:
-				rank = "🥉"
-			}
-			builder.WriteString(fmt.Sprintf("%-3s  %-16s  %7.1f%%  %-5d\n", rank, trimTo(f.Name, 16), f.Winrate, f.Games))
-		}
-		if idx < len(accountIDs)-1 {
-			builder.WriteString("\n")
-		}
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("%-16s  %-16s  %-9s  %-5s\n", "Игрок", "Лучший друг", "Winrate", "Игр"))
+	for _, e := range entries {
+		builder.WriteString(fmt.Sprintf("%-16s  %-16s  %7.1f%%  %-5d\n", trimTo(e.Player, 16), trimTo(e.Friend, 16), e.Winrate, e.Games))
 	}
 	return builder.String(), nil
 }
@@ -456,13 +465,17 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 				}
 				continue
 			}
-			if isFriendsCommand(text) {
-				table, err := buildFriendsTable(accountIDs, 10)
+			if ok, limit, err := parseFriendsCommand(text); ok {
 				if err != nil {
 					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
 					continue
 				}
-				header := "<b>Лучшие напарники по Winrate</b>\n"
+				table, err := buildBestFriendsTable(accountIDs, limit)
+				if err != nil {
+					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
+					continue
+				}
+				header := fmt.Sprintf("<b>Лучшие напарники по Winrate (за %d игр)</b>\n", limit)
 				for _, msg := range buildTelegramMessages(table, header) {
 					if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg, "HTML"); err != nil {
 						return err
@@ -512,20 +525,30 @@ func isRatingCommand(text string) bool {
 	return false
 }
 
-func isFriendsCommand(text string) bool {
+func parseFriendsCommand(text string) (bool, int, error) {
 	if text == "" {
-		return false
+		return false, 0, nil
 	}
-	if text == "/friends" || text == "/Friends" {
-		return true
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return false, 0, nil
 	}
-	if strings.HasPrefix(text, "/friends@") || strings.HasPrefix(text, "/Friends@") {
-		return true
+	cmd := strings.ToLower(fields[0])
+	if strings.Contains(cmd, "@") {
+		cmd = strings.SplitN(cmd, "@", 2)[0]
 	}
-	if strings.HasPrefix(text, "/friends ") || strings.HasPrefix(text, "/Friends ") {
-		return true
+	if cmd != "/friends" {
+		return false, 0, nil
 	}
-	return false
+	limit := 20
+	if len(fields) > 1 {
+		value, err := strconv.Atoi(fields[1])
+		if err != nil || value <= 0 {
+			return true, 0, fmt.Errorf("используй /friends <число>")
+		}
+		limit = value
+	}
+	return true, limit, nil
 }
 
 func isChatIDCommand(text string) bool {
@@ -676,8 +699,7 @@ func runeLen(value string) int {
 }
 
 func matchWin(m recentMatch) bool {
-	isRadiant := m.PlayerSlot < 128
-	return (m.RadiantWin && isRadiant) || (!m.RadiantWin && !isRadiant)
+	return isWin(m.RadiantWin, m.PlayerSlot)
 }
 
 func calcWinrate(matches []recentMatch, limit int) float64 {
@@ -704,6 +726,24 @@ func calcWinrateWithCount(matches []recentMatch, limit int) (float64, int) {
 		return 0, 0
 	}
 	return float64(wins) * 100 / float64(total), total
+}
+
+func calcWinrateFromMatches(matches []playerMatch) (float64, int) {
+	if len(matches) == 0 {
+		return 0, 0
+	}
+	wins := 0
+	for _, m := range matches {
+		if isWin(m.RadiantWin, m.PlayerSlot) {
+			wins++
+		}
+	}
+	return float64(wins) * 100 / float64(len(matches)), len(matches)
+}
+
+func isWin(radiantWin bool, playerSlot int) bool {
+	isRadiant := playerSlot < 128
+	return (radiantWin && isRadiant) || (!radiantWin && !isRadiant)
 }
 
 func formatDuration(seconds int) string {
