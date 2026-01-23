@@ -21,6 +21,7 @@ const (
 	recentMatchesURL = "/players/%d/recentMatches"
 	heroesURL        = "/heroes"
 	playerURL        = "/players/%d"
+	peersURL         = "/players/%d/peers"
 
 	telegramTokenEnv = "TELEGRAM_BOT_TOKEN"
 	telegramChatEnv  = "TELEGRAM_NOTIFY_CHAT_ID"
@@ -55,6 +56,13 @@ type playerProfile struct {
 type playerProfileData struct {
 	PersonaName string
 	AvatarFull  string
+}
+
+type peerEntry struct {
+	AccountID   int64  `json:"account_id"`
+	Personaname string `json:"personaname"`
+	WithGames   int    `json:"with_games"`
+	WithWin     int    `json:"with_win"`
 }
 
 type telegramUpdate struct {
@@ -175,6 +183,15 @@ func fetchPlayerProfile(accountID int64) (playerProfileData, error) {
 	}, nil
 }
 
+func fetchPeers(accountID int64) ([]peerEntry, error) {
+	var peers []peerEntry
+	url := fmt.Sprintf(baseURL+peersURL, accountID)
+	if err := getJSON(url, &peers); err != nil {
+		return nil, err
+	}
+	return peers, nil
+}
+
 func getJSON(url string, out any) error {
 	client := &http.Client{Timeout: requestTimeout}
 	resp, err := client.Get(url)
@@ -272,6 +289,70 @@ func buildRatingTable(accountIDs []int64) (string, error) {
 			rank = "🥉"
 		}
 		builder.WriteString(fmt.Sprintf("%-3s  %-16s  %7.1f%%  %-5d\n", rank, trimTo(e.Name, 16), e.Winrate, e.Games))
+	}
+	return builder.String(), nil
+}
+
+func buildFriendsTable(accountIDs []int64, limit int) (string, error) {
+	type friendEntry struct {
+		Name    string
+		Winrate float64
+		Games   int
+	}
+	var builder strings.Builder
+	for idx, accountID := range accountIDs {
+		player, err := fetchPlayerProfile(accountID)
+		if err != nil {
+			return "", err
+		}
+		peers, err := fetchPeers(accountID)
+		if err != nil {
+			return "", err
+		}
+		friends := make([]friendEntry, 0, len(peers))
+		for _, p := range peers {
+			if p.WithGames <= 0 {
+				continue
+			}
+			name := strings.TrimSpace(p.Personaname)
+			if name == "" {
+				name = fmt.Sprintf("Account %d", p.AccountID)
+			}
+			winrate := float64(p.WithWin) * 100 / float64(p.WithGames)
+			friends = append(friends, friendEntry{
+				Name:    name,
+				Winrate: winrate,
+				Games:   p.WithGames,
+			})
+		}
+		sort.Slice(friends, func(i, j int) bool {
+			if friends[i].Winrate == friends[j].Winrate {
+				return friends[i].Games > friends[j].Games
+			}
+			return friends[i].Winrate > friends[j].Winrate
+		})
+
+		if limit > 0 && len(friends) > limit {
+			friends = friends[:limit]
+		}
+		name := fallbackName(player.PersonaName)
+		builder.WriteString(fmt.Sprintf("Игрок: %s\n", name))
+		builder.WriteString(fmt.Sprintf("%-3s  %-16s  %-9s  %-5s\n", "№", "Друг", "Winrate", "Игр"))
+		for i, f := range friends {
+			rank := fmt.Sprintf("%d", i+1)
+			switch i {
+			case 0:
+				rank = "🥇"
+			case 1:
+				rank = "🥈"
+			case 2:
+				rank = "🥉"
+			}
+			builder.WriteString(fmt.Sprintf("%-3s  %-16s  %7.1f%%  %-5d\n", rank, trimTo(f.Name, 16), f.Winrate, f.Games))
+		}
+		if idx < len(accountIDs)-1 {
+			builder.WriteString("\n")
+		}
 	}
 	return builder.String(), nil
 }
@@ -375,6 +456,20 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 				}
 				continue
 			}
+			if isFriendsCommand(text) {
+				table, err := buildFriendsTable(accountIDs, 10)
+				if err != nil {
+					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
+					continue
+				}
+				header := "<b>Лучшие напарники по Winrate</b>\n"
+				for _, msg := range buildTelegramMessages(table, header) {
+					if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg, "HTML"); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			if isChatIDCommand(text) {
 				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("chat_id: %d", upd.Message.Chat.ID), ""); err != nil {
 					return err
@@ -412,6 +507,22 @@ func isRatingCommand(text string) bool {
 		return true
 	}
 	if strings.HasPrefix(text, "/rating ") {
+		return true
+	}
+	return false
+}
+
+func isFriendsCommand(text string) bool {
+	if text == "" {
+		return false
+	}
+	if text == "/friends" || text == "/Friends" {
+		return true
+	}
+	if strings.HasPrefix(text, "/friends@") || strings.HasPrefix(text, "/Friends@") {
+		return true
+	}
+	if strings.HasPrefix(text, "/friends ") || strings.HasPrefix(text, "/Friends ") {
 		return true
 	}
 	return false
