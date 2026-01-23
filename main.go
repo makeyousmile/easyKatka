@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ const (
 	playerURL        = "/players/%d"
 
 	telegramTokenEnv = "TELEGRAM_BOT_TOKEN"
+	telegramChatEnv  = "TELEGRAM_NOTIFY_CHAT_ID"
 	telegramBaseURL  = "https://api.telegram.org/bot%s"
 	telegramMaxLen   = 3900
 )
@@ -46,7 +48,13 @@ type recentMatch struct {
 type playerProfile struct {
 	Profile struct {
 		PersonaName string `json:"personaname"`
+		AvatarFull  string `json:"avatarfull"`
 	} `json:"profile"`
+}
+
+type playerProfileData struct {
+	PersonaName string
+	AvatarFull  string
 }
 
 type telegramUpdate struct {
@@ -83,6 +91,9 @@ func main() {
 
 	telegramToken := strings.TrimSpace(os.Getenv(telegramTokenEnv))
 	if telegramToken != "" {
+		if notify := telegramNotifier(telegramToken); notify != nil {
+			go monitorMatches(accountIDs, heroes, notify)
+		}
 		if err := runTelegramBot(telegramToken, accountIDs, heroes); err != nil {
 			exitErr(err)
 		}
@@ -94,6 +105,8 @@ func main() {
 		exitErr(err)
 	}
 	fmt.Print(report)
+
+	monitorMatches(accountIDs, heroes, nil)
 }
 
 func loadAccountIDs(path string) ([]int64, error) {
@@ -150,13 +163,16 @@ func fetchRecentMatches(accountID int64) ([]recentMatch, error) {
 	return matches, nil
 }
 
-func fetchPlayerName(accountID int64) (string, error) {
+func fetchPlayerProfile(accountID int64) (playerProfileData, error) {
 	var player playerProfile
 	url := fmt.Sprintf(baseURL+playerURL, accountID)
 	if err := getJSON(url, &player); err != nil {
-		return "", err
+		return playerProfileData{}, err
 	}
-	return strings.TrimSpace(player.Profile.PersonaName), nil
+	return playerProfileData{
+		PersonaName: strings.TrimSpace(player.Profile.PersonaName),
+		AvatarFull:  strings.TrimSpace(player.Profile.AvatarFull),
+	}, nil
 }
 
 func getJSON(url string, out any) error {
@@ -180,7 +196,7 @@ func getJSON(url string, out any) error {
 func buildReport(accountIDs []int64, heroes map[int]string) (string, error) {
 	var builder strings.Builder
 	for i, accountID := range accountIDs {
-		playerName, err := fetchPlayerName(accountID)
+		player, err := fetchPlayerProfile(accountID)
 		if err != nil {
 			return "", err
 		}
@@ -194,7 +210,7 @@ func buildReport(accountIDs []int64, heroes map[int]string) (string, error) {
 			matches = matches[:10]
 		}
 
-		writeMatches(&builder, matches, heroes, playerName)
+		writeMatches(&builder, matches, heroes, player.PersonaName, true)
 		if i < len(accountIDs)-1 {
 			builder.WriteString("\n\n")
 		}
@@ -202,11 +218,71 @@ func buildReport(accountIDs []int64, heroes map[int]string) (string, error) {
 	return builder.String(), nil
 }
 
-func writeMatches(writer io.Writer, matches []recentMatch, heroes map[int]string, playerName string) {
+func buildPlayerTable(matches []recentMatch, heroes map[int]string, playerName string) string {
+	var builder strings.Builder
+	writeMatches(&builder, matches, heroes, playerName, false)
+	return builder.String()
+}
+
+func buildRatingTable(accountIDs []int64) (string, error) {
+	type ratingEntry struct {
+		Name    string
+		Winrate float64
+		Games   int
+	}
+	entries := make([]ratingEntry, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		player, err := fetchPlayerProfile(accountID)
+		if err != nil {
+			return "", err
+		}
+		matches, err := fetchRecentMatches(accountID)
+		if err != nil {
+			return "", err
+		}
+		winrate, games := calcWinrateWithCount(matches, 20)
+		name := player.PersonaName
+		if name == "" {
+			name = "неизвестный"
+		}
+		entries = append(entries, ratingEntry{
+			Name:    name,
+			Winrate: winrate,
+			Games:   games,
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Winrate == entries[j].Winrate {
+			return entries[i].Games > entries[j].Games
+		}
+		return entries[i].Winrate > entries[j].Winrate
+	})
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("%-3s  %-16s  %-9s  %-5s\n", "№", "Игрок", "Winrate", "Игр"))
+	for i, e := range entries {
+		rank := fmt.Sprintf("%d", i+1)
+		switch i {
+		case 0:
+			rank = "🥇"
+		case 1:
+			rank = "🥈"
+		case 2:
+			rank = "🥉"
+		}
+		builder.WriteString(fmt.Sprintf("%-3s  %-16s  %7.1f%%  %-5d\n", rank, trimTo(e.Name, 16), e.Winrate, e.Games))
+	}
+	return builder.String(), nil
+}
+
+func writeMatches(writer io.Writer, matches []recentMatch, heroes map[int]string, playerName string, includeTitle bool) {
 	if playerName == "" {
 		playerName = "неизвестный"
 	}
-	fmt.Fprintf(writer, "Последние матчи (%s):\n", playerName)
+	if includeTitle {
+		fmt.Fprintf(writer, "Последние матчи (%s):\n", playerName)
+	}
 	fmt.Fprintf(writer, "%-16s  %-12s  %-4s  %-7s  %-6s\n", "Дата", "Герой", "Итог", "K/D/A", "Длит.")
 	for _, m := range matches {
 		heroName := heroes[m.HeroID]
@@ -244,18 +320,66 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 				continue
 			}
 			text := strings.TrimSpace(upd.Message.Text)
-			if !isStatCommand(text) {
+			if isStatCommand(text) {
+				for _, accountID := range accountIDs {
+					player, err := fetchPlayerProfile(accountID)
+					if err != nil {
+						sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
+						continue
+					}
+					matches, err := fetchRecentMatches(accountID)
+					if err != nil {
+						sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
+						continue
+					}
+					winrate := calcWinrate(matches, 20)
+					if len(matches) > 10 {
+						matches = matches[:10]
+					}
+					table := buildPlayerTable(matches, heroes, player.PersonaName)
+					name := player.PersonaName
+					if name == "" {
+						name = "неизвестный"
+					}
+					header := fmt.Sprintf("<b>Последние матчи (%s)</b>\n<b>Winrate (за 20 игр): %.1f%%</b>\n<b>✅ победа, ❌ поражение</b>\n", escapeHTML(name), winrate)
+					if player.AvatarFull != "" {
+						if err := sendTelegramPhoto(apiBase, upd.Message.Chat.ID, player.AvatarFull, header, "HTML"); err != nil {
+							return err
+						}
+						for _, msg := range buildTelegramMessages(table, "") {
+							if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg, "HTML"); err != nil {
+								return err
+							}
+						}
+					} else {
+						for _, msg := range buildTelegramMessages(table, header) {
+							if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg, "HTML"); err != nil {
+								return err
+							}
+						}
+					}
+				}
 				continue
 			}
-			report, err := buildReport(accountIDs, heroes)
-			if err != nil {
-				sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
+			if isRatingCommand(text) {
+				table, err := buildRatingTable(accountIDs)
+				if err != nil {
+					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
+					continue
+				}
+				header := "<b>Рейтинг по Winrate (20)</b>\n"
+				for _, msg := range buildTelegramMessages(table, header) {
+					if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg, "HTML"); err != nil {
+						return err
+					}
+				}
 				continue
 			}
-			for _, msg := range buildTelegramMessages(report) {
-				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg, "HTML"); err != nil {
+			if isChatIDCommand(text) {
+				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("chat_id: %d", upd.Message.Chat.ID), ""); err != nil {
 					return err
 				}
+				continue
 			}
 		}
 	}
@@ -272,6 +396,38 @@ func isStatCommand(text string) bool {
 		return true
 	}
 	if strings.HasPrefix(text, "/stat ") {
+		return true
+	}
+	return false
+}
+
+func isRatingCommand(text string) bool {
+	if text == "" {
+		return false
+	}
+	if text == "/rating" {
+		return true
+	}
+	if strings.HasPrefix(text, "/rating@") {
+		return true
+	}
+	if strings.HasPrefix(text, "/rating ") {
+		return true
+	}
+	return false
+}
+
+func isChatIDCommand(text string) bool {
+	if text == "" {
+		return false
+	}
+	if text == "/chatid" {
+		return true
+	}
+	if strings.HasPrefix(text, "/chatid@") {
+		return true
+	}
+	if strings.HasPrefix(text, "/chatid ") {
 		return true
 	}
 	return false
@@ -303,6 +459,39 @@ func sendTelegramMessage(apiBase string, chatID int64, text string, parseMode st
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return fmt.Errorf("telegram send failed: %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
+func sendTelegramPhoto(apiBase string, chatID int64, photoURL string, caption string, parseMode string) error {
+	payload := map[string]any{
+		"chat_id": chatID,
+		"photo":   photoURL,
+	}
+	if caption != "" {
+		payload["caption"] = caption
+	}
+	if parseMode != "" {
+		payload["parse_mode"] = parseMode
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal telegram photo: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, apiBase+"/sendPhoto", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("telegram photo request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram photo send: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("telegram photo failed: %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
 	}
 	return nil
 }
@@ -341,8 +530,7 @@ func escapeHTML(text string) string {
 	return builder.String()
 }
 
-func buildTelegramMessages(report string) []string {
-	header := "<b>Последние матчи</b>\n<b>W=победа ✅, L=поражение ❌</b>\n"
+func buildTelegramMessages(report string, header string) []string {
 	escaped := escapeHTML(report)
 
 	preWrapperLen := runeLen("<pre></pre>")
@@ -381,6 +569,32 @@ func matchWin(m recentMatch) bool {
 	return (m.RadiantWin && isRadiant) || (!m.RadiantWin && !isRadiant)
 }
 
+func calcWinrate(matches []recentMatch, limit int) float64 {
+	winrate, _ := calcWinrateWithCount(matches, limit)
+	return winrate
+}
+
+func calcWinrateWithCount(matches []recentMatch, limit int) (float64, int) {
+	if limit <= 0 {
+		return 0, 0
+	}
+	total := 0
+	wins := 0
+	for _, m := range matches {
+		if total >= limit {
+			break
+		}
+		total++
+		if matchWin(m) {
+			wins++
+		}
+	}
+	if total == 0 {
+		return 0, 0
+	}
+	return float64(wins) * 100 / float64(total), total
+}
+
 func formatDuration(seconds int) string {
 	if seconds <= 0 {
 		return "0:00"
@@ -398,6 +612,107 @@ func trimTo(value string, max int) string {
 		return value[:max]
 	}
 	return value[:max-3] + "..."
+}
+
+func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(string)) {
+	lastMatch := make(map[int64]int64, len(accountIDs))
+	names := make(map[int64]string, len(accountIDs))
+	if notify == nil {
+		notify = func(msg string) {
+			fmt.Println(msg)
+		}
+	}
+	for _, accountID := range accountIDs {
+		player, err := fetchPlayerProfile(accountID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "profile error: %s\n", err.Error())
+		} else {
+			names[accountID] = fallbackName(player.PersonaName)
+		}
+		matches, err := fetchRecentMatches(accountID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "matches error: %s\n", err.Error())
+			continue
+		}
+		if len(matches) > 0 {
+			lastMatch[accountID] = matches[0].MatchID
+		}
+	}
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		for _, accountID := range accountIDs {
+			matches, err := fetchRecentMatches(accountID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "matches error: %s\n", err.Error())
+				continue
+			}
+			if len(matches) == 0 {
+				continue
+			}
+			prev, ok := lastMatch[accountID]
+			if !ok {
+				lastMatch[accountID] = matches[0].MatchID
+				continue
+			}
+			if matches[0].MatchID == prev {
+				continue
+			}
+			var newMatches []recentMatch
+			for _, m := range matches {
+				if m.MatchID == prev {
+					break
+				}
+				newMatches = append(newMatches, m)
+			}
+			for i := len(newMatches) - 1; i >= 0; i-- {
+				line := formatMatchSummary(names[accountID], newMatches[i], heroes)
+				notify(line)
+			}
+			lastMatch[accountID] = matches[0].MatchID
+		}
+	}
+}
+
+func formatMatchSummary(playerName string, match recentMatch, heroes map[int]string) string {
+	heroName := heroes[match.HeroID]
+	if heroName == "" {
+		heroName = fmt.Sprintf("Hero #%d", match.HeroID)
+	}
+	result := "❌"
+	if matchWin(match) {
+		result = "✅"
+	}
+	start := time.Unix(match.StartTime, 0).Local().Format("2006-01-02 15:04")
+	duration := formatDuration(match.Duration)
+	kda := fmt.Sprintf("%d/%d/%d", match.Kills, match.Deaths, match.Assists)
+	return fmt.Sprintf("Новый матч: %s | %s | %s | %s | %s | %s", fallbackName(playerName), heroName, result, kda, duration, start)
+}
+
+func fallbackName(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return "неизвестный"
+	}
+	return strings.TrimSpace(name)
+}
+
+func telegramNotifier(token string) func(string) {
+	chatIDRaw := strings.TrimSpace(os.Getenv(telegramChatEnv))
+	if chatIDRaw == "" {
+		return nil
+	}
+	chatID, err := strconv.ParseInt(chatIDRaw, 10, 64)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid %s: %s\n", telegramChatEnv, err.Error())
+		return nil
+	}
+	apiBase := fmt.Sprintf(telegramBaseURL, token)
+	return func(msg string) {
+		if err := sendTelegramMessage(apiBase, chatID, msg, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "telegram notify error: %s\n", err.Error())
+		}
+	}
 }
 
 func exitErr(err error) {
