@@ -98,6 +98,10 @@ func buildBestFriendsTable(accountIDs []int64, limit int) (string, error) {
 		Winrate float64
 		Games   int
 	}
+	allowedFriends := make(map[int64]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		allowedFriends[id] = struct{}{}
+	}
 	entries := make([]bestFriendEntry, 0, len(accountIDs))
 	for _, accountID := range accountIDs {
 		player, err := fetchPlayerProfile(accountID)
@@ -119,6 +123,12 @@ func buildBestFriendsTable(accountIDs []int64, limit int) (string, error) {
 			Friend: "нет данных",
 		}
 		for _, p := range peers {
+			if p.AccountID == accountID {
+				continue
+			}
+			if _, ok := allowedFriends[p.AccountID]; !ok {
+				continue
+			}
 			matches, err := fetchMatchesWith(accountID, p.AccountID, limit)
 			if err != nil {
 				return "", err
