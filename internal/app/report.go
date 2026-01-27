@@ -113,14 +113,6 @@ func buildBestFriendsTable(accountIDs []int64, limit int) (string, error) {
 	entries := make([]bestFriendEntry, 0, len(accountIDs))
 	for _, accountID := range accountIDs {
 		playerName := nameByID[accountID]
-		recentMatches, err := fetchPlayerMatches(accountID, limit)
-		if err != nil {
-			return "", err
-		}
-		allowedMatchIDs := make(map[int64]struct{}, len(recentMatches))
-		for _, m := range recentMatches {
-			allowedMatchIDs[m.MatchID] = struct{}{}
-		}
 		best := bestFriendEntry{
 			Player: playerName,
 			Friend: "нет данных",
@@ -136,7 +128,6 @@ func buildBestFriendsTable(accountIDs []int64, limit int) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			matches = filterMatchesByID(matches, allowedMatchIDs)
 			winrate, games := calcWinrateFromMatches(matches)
 			if games == 0 {
 				continue

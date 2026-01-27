@@ -48,19 +48,6 @@ func calcWinrateFromMatches(matches []playerMatch) (float64, int) {
 	return float64(wins) * 100 / float64(len(matches)), len(matches)
 }
 
-func filterMatchesByID(matches []playerMatch, allowed map[int64]struct{}) []playerMatch {
-	if len(matches) == 0 || len(allowed) == 0 {
-		return nil
-	}
-	filtered := make([]playerMatch, 0, len(matches))
-	for _, m := range matches {
-		if _, ok := allowed[m.MatchID]; ok {
-			filtered = append(filtered, m)
-		}
-	}
-	return filtered
-}
-
 func isWin(radiantWin bool, playerSlot int) bool {
 	isRadiant := playerSlot < 128
 	return (radiantWin && isRadiant) || (!radiantWin && !isRadiant)
