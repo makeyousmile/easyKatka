@@ -128,6 +128,15 @@ func fetchMatchesWith(accountID int64, includedAccountID int64, limit int) ([]pl
 	return matches, nil
 }
 
+func fetchPlayerMatches(accountID int64, limit int) ([]playerMatch, error) {
+	var matches []playerMatch
+	url := fmt.Sprintf("%s"+playerMatchesURL+"?limit=%d", baseURL, accountID, limit)
+	if err := getOpendotaJSON(url, &matches); err != nil {
+		return nil, err
+	}
+	return matches, nil
+}
+
 func getOpendotaJSON(url string, out any) error {
 	return getJSON(url, out, opendotaLimiter)
 }

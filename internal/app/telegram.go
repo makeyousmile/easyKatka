@@ -117,7 +117,7 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
 					continue
 				}
-				header := fmt.Sprintf("<b>Лучшие напарники по Winrate (за %d игр)</b>\n", limit)
+				header := fmt.Sprintf("<b>Лучшие напарники по Winrate (за последние %d игр)</b>\n", limit)
 				for _, msg := range buildTelegramMessages(table, header) {
 					if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg, "HTML"); err != nil {
 						return err

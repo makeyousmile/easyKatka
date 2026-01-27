@@ -102,45 +102,49 @@ func buildBestFriendsTable(accountIDs []int64, limit int) (string, error) {
 	for _, id := range accountIDs {
 		allowedFriends[id] = struct{}{}
 	}
+	nameByID := make(map[int64]string, len(accountIDs))
+	for _, id := range accountIDs {
+		player, err := fetchPlayerProfile(id)
+		if err != nil {
+			return "", err
+		}
+		nameByID[id] = fallbackName(player.PersonaName)
+	}
 	entries := make([]bestFriendEntry, 0, len(accountIDs))
 	for _, accountID := range accountIDs {
-		player, err := fetchPlayerProfile(accountID)
+		playerName := nameByID[accountID]
+		recentMatches, err := fetchPlayerMatches(accountID, limit)
 		if err != nil {
 			return "", err
 		}
-		peers, err := fetchPeers(accountID)
-		if err != nil {
-			return "", err
-		}
-		sort.Slice(peers, func(i, j int) bool {
-			return peers[i].WithGames > peers[j].WithGames
-		})
-		if len(peers) > 20 {
-			peers = peers[:20]
+		allowedMatchIDs := make(map[int64]struct{}, len(recentMatches))
+		for _, m := range recentMatches {
+			allowedMatchIDs[m.MatchID] = struct{}{}
 		}
 		best := bestFriendEntry{
-			Player: fallbackName(player.PersonaName),
+			Player: playerName,
 			Friend: "нет данных",
 		}
-		for _, p := range peers {
-			if p.AccountID == accountID {
+		for _, friendID := range accountIDs {
+			if friendID == accountID {
 				continue
 			}
-			if _, ok := allowedFriends[p.AccountID]; !ok {
+			if _, ok := allowedFriends[friendID]; !ok {
 				continue
 			}
-			matches, err := fetchMatchesWith(accountID, p.AccountID, limit)
+			matches, err := fetchMatchesWith(accountID, friendID, limit)
 			if err != nil {
 				return "", err
 			}
+			matches = filterMatchesByID(matches, allowedMatchIDs)
 			winrate, games := calcWinrateFromMatches(matches)
 			if games == 0 {
 				continue
 			}
 			if winrate > best.Winrate || (winrate == best.Winrate && games > best.Games) {
-				name := strings.TrimSpace(p.Personaname)
+				name := nameByID[friendID]
 				if name == "" {
-					name = fmt.Sprintf("Account %d", p.AccountID)
+					name = fmt.Sprintf("Account %d", friendID)
 				}
 				best.Friend = name
 				best.Winrate = winrate
