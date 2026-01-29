@@ -51,7 +51,7 @@ func buildRatingTable(accountIDs []int64) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		matches, err := fetchRecentMatches(accountID)
+		matches, err := fetchPlayerMatches(accountID, 50)
 		if err != nil {
 			return "", err
 		}
