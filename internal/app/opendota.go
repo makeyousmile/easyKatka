@@ -98,6 +98,18 @@ func fetchRecentMatches(accountID int64) ([]recentMatch, error) {
 	return matches, nil
 }
 
+func fetchPlayerMatches(accountID int64, limit int) ([]recentMatch, error) {
+	if limit <= 0 {
+		return []recentMatch{}, nil
+	}
+	var matches []recentMatch
+	url := fmt.Sprintf("%s"+playerMatchesURL+"?limit=%d", baseURL, accountID, limit)
+	if err := getOpendotaJSON(url, &matches); err != nil {
+		return nil, err
+	}
+	return matches, nil
+}
+
 func fetchPlayerProfile(accountID int64) (playerProfileData, error) {
 	var player playerProfile
 	url := fmt.Sprintf(baseURL+playerURL, accountID)

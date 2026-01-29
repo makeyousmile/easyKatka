@@ -16,7 +16,7 @@ func buildReport(accountIDs []int64, heroes map[int]string) (string, error) {
 			return "", err
 		}
 
-		matches, err := fetchRecentMatches(accountID)
+		matches, err := fetchPlayerMatches(accountID, 50)
 		if err != nil {
 			return "", err
 		}
