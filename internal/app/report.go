@@ -55,7 +55,7 @@ func buildRatingTable(accountIDs []int64) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		winrate, games := calcWinrateWithCount(matches, 20)
+		winrate, games := calcWinrateWithCount(matches, 50)
 		name := player.PersonaName
 		if name == "" {
 			name = "неизвестный"
