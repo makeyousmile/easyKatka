@@ -9,6 +9,4 @@ FROM alpine:3.19
 WORKDIR /app
 COPY --from=builder /out/app /app/app
 COPY account_id /app/account_id
-ENV TELEGRAM_BOT_TOKEN=""
-ENV TELEGRAM_NOTIFY_CHAT_ID=""
 CMD ["/app/app"]

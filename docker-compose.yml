@@ -2,9 +2,8 @@ services:
   easykatka:
     build: .
     container_name: easykatka
-    environment:
-      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
-      TELEGRAM_NOTIFY_CHAT_ID: "${TELEGRAM_NOTIFY_CHAT_ID}"
+    env_file:
+      - .env
     volumes:
       - ./account_id:/app/account_id:ro
     restart: unless-stopped
