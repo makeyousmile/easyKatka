@@ -50,3 +50,16 @@ func TestBuildTelegramMessages_Long(t *testing.T) {
 		t.Fatalf("first message missing header and <pre>")
 	}
 }
+
+func TestParseMatchCallbackData(t *testing.T) {
+	accountID, matchID, ok := parseMatchCallbackData("match:123:456")
+	if !ok {
+		t.Fatal("expected callback data to parse")
+	}
+	if accountID != 123 || matchID != 456 {
+		t.Fatalf("unexpected parsed values: accountID=%d matchID=%d", accountID, matchID)
+	}
+	if _, _, ok := parseMatchCallbackData("bad:data"); ok {
+		t.Fatal("expected invalid callback data to fail")
+	}
+}

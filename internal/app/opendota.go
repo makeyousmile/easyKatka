@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -49,6 +50,54 @@ type playerMatch struct {
 	MatchID    int64 `json:"match_id"`
 	PlayerSlot int   `json:"player_slot"`
 	RadiantWin bool  `json:"radiant_win"`
+}
+
+type matchDetails struct {
+	MatchID      int64                `json:"match_id"`
+	Duration     int                  `json:"duration"`
+	StartTime    int64                `json:"start_time"`
+	GameMode     int                  `json:"game_mode"`
+	LobbyType    int                  `json:"lobby_type"`
+	RadiantWin   bool                 `json:"radiant_win"`
+	RadiantScore int                  `json:"radiant_score"`
+	DireScore    int                  `json:"dire_score"`
+	FirstBlood   int                  `json:"first_blood_time"`
+	LeagueName   string               `json:"league_name"`
+	Players      []matchDetailsPlayer `json:"players"`
+}
+
+type matchDetailsPlayer struct {
+	AccountID    int64  `json:"account_id"`
+	PersonaName  string `json:"personaname"`
+	HeroID       int    `json:"hero_id"`
+	PlayerSlot   int    `json:"player_slot"`
+	Kills        int    `json:"kills"`
+	Deaths       int    `json:"deaths"`
+	Assists      int    `json:"assists"`
+	Level        int    `json:"level"`
+	GPM          int    `json:"gold_per_min"`
+	XPM          int    `json:"xp_per_min"`
+	LastHits     int    `json:"last_hits"`
+	Denies       int    `json:"denies"`
+	HeroDamage   int    `json:"hero_damage"`
+	TowerDamage  int    `json:"tower_damage"`
+	HeroHealing  int    `json:"hero_healing"`
+	NetWorth     int    `json:"net_worth"`
+	Item0        int    `json:"item_0"`
+	Item1        int    `json:"item_1"`
+	Item2        int    `json:"item_2"`
+	Item3        int    `json:"item_3"`
+	Item4        int    `json:"item_4"`
+	Item5        int    `json:"item_5"`
+	Backpack0    int    `json:"backpack_0"`
+	Backpack1    int    `json:"backpack_1"`
+	Backpack2    int    `json:"backpack_2"`
+	NeutralItem  int    `json:"item_neutral"`
+}
+
+type itemConstantsEntry struct {
+	ID   int    `json:"id"`
+	DName string `json:"dname"`
 }
 
 type rateLimiter struct {
@@ -138,6 +187,42 @@ func fetchMatchesWith(accountID int64, includedAccountID int64, limit int) ([]pl
 		return nil, err
 	}
 	return matches, nil
+}
+
+func fetchMatchDetails(matchID int64) (matchDetails, error) {
+	var details matchDetails
+	url := fmt.Sprintf(baseURL+matchURL, matchID)
+	if err := getOpendotaJSON(url, &details); err != nil {
+		return matchDetails{}, err
+	}
+	return details, nil
+}
+
+func fetchItemNames() (map[int]string, error) {
+	var items map[string]itemConstantsEntry
+	if err := getOpendotaJSON(baseURL+itemsURL, &items); err != nil {
+		return nil, err
+	}
+	result := make(map[int]string, len(items))
+	for _, item := range items {
+		if item.ID == 0 || strings.TrimSpace(item.DName) == "" {
+			continue
+		}
+		result[item.ID] = strings.TrimSpace(item.DName)
+	}
+	return result, nil
+}
+
+func sortItemNames(items []string) []string {
+	filtered := items[:0]
+	for _, item := range items {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	sort.Strings(filtered)
+	return filtered
 }
 
 func getOpendotaJSON(url string, out any) error {

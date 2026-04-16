@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(string)) {
+func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(matchNotification)) {
 	lastMatch := make(map[int64]int64, len(accountIDs))
-	names := make(map[int64]string, len(accountIDs))
+	avatars := make(map[int64]string, len(accountIDs))
 	if notify == nil {
-		notify = func(msg string) {
-			fmt.Println(msg)
+		notify = func(msg matchNotification) {
+			fmt.Println(msg.Text)
 		}
 	}
 	for _, accountID := range accountIDs {
@@ -19,7 +19,7 @@ func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(strin
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "profile error: %s\n", err.Error())
 		} else {
-			names[accountID] = fallbackName(player.PersonaName)
+			avatars[accountID] = player.AvatarFull
 		}
 		matches, err := fetchRecentMatches(accountID)
 		if err != nil {
@@ -59,8 +59,12 @@ func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(strin
 				newMatches = append(newMatches, m)
 			}
 			for i := len(newMatches) - 1; i >= 0; i-- {
-				line := formatMatchSummary(names[accountID], newMatches[i], heroes)
-				notify(line)
+				notify(matchNotification{
+					Text:      formatMatchSummary(newMatches[i], heroes),
+					PhotoURL:  avatars[accountID],
+					MatchID:   newMatches[i].MatchID,
+					AccountID: accountID,
+				})
 			}
 			lastMatch[accountID] = matches[0].MatchID
 		}

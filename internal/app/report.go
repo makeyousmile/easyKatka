@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+type matchNotification struct {
+	Text     string
+	PhotoURL string
+	MatchID  int64
+	AccountID int64
+}
+
 func buildReport(accountIDs []int64, heroes map[int]string) (string, error) {
 	var builder strings.Builder
 	for i, accountID := range accountIDs {
@@ -178,7 +185,7 @@ func writeMatches(writer io.Writer, matches []recentMatch, heroes map[int]string
 	}
 }
 
-func formatMatchSummary(playerName string, match recentMatch, heroes map[int]string) string {
+func formatMatchSummary(match recentMatch, heroes map[int]string) string {
 	heroName := heroes[match.HeroID]
 	if heroName == "" {
 		heroName = fmt.Sprintf("Hero #%d", match.HeroID)
@@ -189,30 +196,105 @@ func formatMatchSummary(playerName string, match recentMatch, heroes map[int]str
 	}
 	duration := formatDuration(match.Duration)
 	kda := fmt.Sprintf("%d/%d/%d", match.Kills, match.Deaths, match.Assists)
-	return fmt.Sprintf("%s | %s | %s | %s | %s", result, fallbackName(playerName), heroName, kda, duration)
+	return fmt.Sprintf("%s | %s | %s | %s", result, heroName, kda, duration)
 }
 
-func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (string, error) {
+func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNotification, error) {
 	if len(accountIDs) == 0 {
-		return "", fmt.Errorf("нет аккаунтов для тестового сообщения")
+		return matchNotification{}, fmt.Errorf("нет аккаунтов для тестового сообщения")
 	}
 
 	for _, accountID := range accountIDs {
 		player, err := fetchPlayerProfile(accountID)
 		if err != nil {
-			return "", err
+			return matchNotification{}, err
 		}
 
 		matches, err := fetchRecentMatches(accountID)
 		if err != nil {
-			return "", err
+			return matchNotification{}, err
 		}
 		if len(matches) == 0 {
 			continue
 		}
 
-		return formatMatchSummary(player.PersonaName, matches[0], heroes), nil
+		return matchNotification{
+			Text:      formatMatchSummary(matches[0], heroes),
+			PhotoURL:  player.AvatarFull,
+			MatchID:   matches[0].MatchID,
+			AccountID: accountID,
+		}, nil
 	}
 
-	return "", fmt.Errorf("не найдено ни одного матча для тестового сообщения")
+	return matchNotification{}, fmt.Errorf("не найдено ни одного матча для тестового сообщения")
+}
+
+func findPlayerInMatch(details matchDetails, accountID int64) *matchDetailsPlayer {
+	for i := range details.Players {
+		if details.Players[i].AccountID == accountID {
+			return &details.Players[i]
+		}
+	}
+	return nil
+}
+
+func formatMatchDetailsMessage(details matchDetails, accountID int64, heroes map[int]string, itemNames map[int]string) (string, error) {
+	player := findPlayerInMatch(details, accountID)
+	if player == nil {
+		return "", fmt.Errorf("игрок не найден в деталях матча")
+	}
+
+	heroName := heroes[player.HeroID]
+	if heroName == "" {
+		heroName = fmt.Sprintf("Hero #%d", player.HeroID)
+	}
+
+	result := "❌ Поражение"
+	if matchWin(recentMatch{PlayerSlot: player.PlayerSlot, RadiantWin: details.RadiantWin}) {
+		result = "✅ Победа"
+	}
+
+	itemList := collectPlayerItems(*player, itemNames)
+	itemsText := "нет данных"
+	if len(itemList) > 0 {
+		itemsText = strings.Join(itemList, ", ")
+	}
+
+	lines := []string{
+		fmt.Sprintf("<b>%s</b>", escapeHTML(result)),
+		fmt.Sprintf("<b>Игрок:</b> %s", escapeHTML(fallbackName(player.PersonaName))),
+		fmt.Sprintf("<b>Герой:</b> %s", escapeHTML(heroName)),
+		fmt.Sprintf("<b>K/D/A:</b> <code>%d/%d/%d</code>", player.Kills, player.Deaths, player.Assists),
+		fmt.Sprintf("<b>Длительность:</b> <code>%s</code>", formatDuration(details.Duration)),
+		fmt.Sprintf("<b>Счёт:</b> <code>%d:%d</code>", details.RadiantScore, details.DireScore),
+		fmt.Sprintf("<b>GPM/XPM:</b> <code>%d/%d</code>", player.GPM, player.XPM),
+		fmt.Sprintf("<b>LH/DN:</b> <code>%d/%d</code>", player.LastHits, player.Denies),
+		fmt.Sprintf("<b>Hero Damage:</b> <code>%d</code>", player.HeroDamage),
+		fmt.Sprintf("<b>Tower Damage:</b> <code>%d</code>", player.TowerDamage),
+		fmt.Sprintf("<b>Hero Healing:</b> <code>%d</code>", player.HeroHealing),
+		fmt.Sprintf("<b>Net Worth:</b> <code>%d</code>", player.NetWorth),
+		fmt.Sprintf("<b>Предметы:</b> %s", escapeHTML(itemsText)),
+		fmt.Sprintf("<b>Match ID:</b> <code>%d</code>", details.MatchID),
+		fmt.Sprintf("<a href=\"https://www.opendota.com/matches/%d\">OpenDota</a>", details.MatchID),
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func collectPlayerItems(player matchDetailsPlayer, itemNames map[int]string) []string {
+	itemIDs := []int{
+		player.Item0, player.Item1, player.Item2, player.Item3, player.Item4, player.Item5,
+		player.Backpack0, player.Backpack1, player.Backpack2, player.NeutralItem,
+	}
+	items := make([]string, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		if itemID <= 0 {
+			continue
+		}
+		if name := strings.TrimSpace(itemNames[itemID]); name != "" {
+			items = append(items, name)
+			continue
+		}
+		items = append(items, fmt.Sprintf("Item #%d", itemID))
+	}
+	return items
 }

@@ -11,6 +11,8 @@ const (
 	opendotaRateSpan = time.Minute
 	recentMatchesURL = "/players/%d/recentMatches"
 	heroesURL        = "/heroes"
+	matchURL         = "/matches/%d"
+	itemsURL         = "/constants/items"
 	playerURL        = "/players/%d"
 	peersURL         = "/players/%d/peers"
 	playerMatchesURL = "/players/%d/matches"
