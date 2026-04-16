@@ -79,3 +79,19 @@ func isChatIDCommand(text string) bool {
 	}
 	return false
 }
+
+func isTestCommand(text string) bool {
+	if text == "" {
+		return false
+	}
+	if text == "/test" {
+		return true
+	}
+	if strings.HasPrefix(text, "/test@") {
+		return true
+	}
+	if strings.HasPrefix(text, "/test ") {
+		return true
+	}
+	return false
+}

@@ -191,3 +191,28 @@ func formatMatchSummary(playerName string, match recentMatch, heroes map[int]str
 	kda := fmt.Sprintf("%d/%d/%d", match.Kills, match.Deaths, match.Assists)
 	return fmt.Sprintf("%s | %s | %s | %s | %s", result, fallbackName(playerName), heroName, kda, duration)
 }
+
+func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (string, error) {
+	if len(accountIDs) == 0 {
+		return "", fmt.Errorf("нет аккаунтов для тестового сообщения")
+	}
+
+	for _, accountID := range accountIDs {
+		player, err := fetchPlayerProfile(accountID)
+		if err != nil {
+			return "", err
+		}
+
+		matches, err := fetchRecentMatches(accountID)
+		if err != nil {
+			return "", err
+		}
+		if len(matches) == 0 {
+			continue
+		}
+
+		return formatMatchSummary(player.PersonaName, matches[0], heroes), nil
+	}
+
+	return "", fmt.Errorf("не найдено ни одного матча для тестового сообщения")
+}

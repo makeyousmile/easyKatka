@@ -131,6 +131,17 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 				}
 				continue
 			}
+			if isTestCommand(text) {
+				msg, err := buildTestMatchSummary(accountIDs, heroes)
+				if err != nil {
+					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "")
+					continue
+				}
+				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg, ""); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 	}
 }

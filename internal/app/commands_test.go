@@ -84,3 +84,16 @@ func TestIsChatIDCommand(t *testing.T) {
 		t.Fatal("expected false for empty input")
 	}
 }
+
+func TestIsTestCommand(t *testing.T) {
+	// Проверяем допустимые формы команды /test.
+	cases := []string{"/test", "/test@bot", "/test now"}
+	for _, input := range cases {
+		if !isTestCommand(input) {
+			t.Fatalf("expected true for %q", input)
+		}
+	}
+	if isTestCommand("") {
+		t.Fatal("expected false for empty input")
+	}
+}
