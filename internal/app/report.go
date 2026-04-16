@@ -187,8 +187,7 @@ func formatMatchSummary(playerName string, match recentMatch, heroes map[int]str
 	if matchWin(match) {
 		result = "✅"
 	}
-	start := time.Unix(match.StartTime, 0).Local().Format("2006-01-02 15:04")
 	duration := formatDuration(match.Duration)
 	kda := fmt.Sprintf("%d/%d/%d", match.Kills, match.Deaths, match.Assists)
-	return fmt.Sprintf("Новый матч: %s | %s | %s | %s | %s | %s", fallbackName(playerName), heroName, result, kda, duration, start)
+	return fmt.Sprintf("%s | %s | %s | %s | %s", result, fallbackName(playerName), heroName, kda, duration)
 }
