@@ -150,14 +150,8 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
 					continue
 				}
-				if msg.PhotoURL != "" {
-					if err := sendTelegramPhoto(apiBase, upd.Message.Chat.ID, msg.PhotoURL, msg.Text, "", buildMatchDetailsMarkup(msg)); err != nil {
-						return err
-					}
-				} else {
-					if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg.Text, "", buildMatchDetailsMarkup(msg)); err != nil {
-						return err
-					}
+				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg.Text, "", buildMatchDetailsMarkup(msg)); err != nil {
+					return err
 				}
 				continue
 			}
@@ -314,14 +308,8 @@ func telegramNotifier(token string) func(matchNotification) {
 	}
 	apiBase := fmt.Sprintf(telegramBaseURL, token)
 	return func(msg matchNotification) {
-		var err error
 		replyMarkup := buildMatchDetailsMarkup(msg)
-		if msg.PhotoURL != "" {
-			err = sendTelegramPhoto(apiBase, chatID, msg.PhotoURL, msg.Text, "", replyMarkup)
-		} else {
-			err = sendTelegramMessage(apiBase, chatID, msg.Text, "", replyMarkup)
-		}
-		if err != nil {
+		if err := sendTelegramMessage(apiBase, chatID, msg.Text, "", replyMarkup); err != nil {
 			fmt.Fprintf(os.Stderr, "telegram notify error: %s\n", err.Error())
 		}
 	}

@@ -8,7 +8,7 @@ import (
 
 func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(matchNotification)) {
 	lastMatch := make(map[int64]int64, len(accountIDs))
-	avatars := make(map[int64]string, len(accountIDs))
+	names := make(map[int64]string, len(accountIDs))
 	if notify == nil {
 		notify = func(msg matchNotification) {
 			fmt.Println(msg.Text)
@@ -19,7 +19,7 @@ func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(match
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "profile error: %s\n", err.Error())
 		} else {
-			avatars[accountID] = player.AvatarFull
+			names[accountID] = fallbackName(player.PersonaName)
 		}
 		matches, err := fetchRecentMatches(accountID)
 		if err != nil {
@@ -60,8 +60,7 @@ func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(match
 			}
 			for i := len(newMatches) - 1; i >= 0; i-- {
 				notify(matchNotification{
-					Text:      formatMatchSummary(newMatches[i], heroes),
-					PhotoURL:  avatars[accountID],
+					Text:      formatMatchSummary(names[accountID], newMatches[i], heroes),
 					MatchID:   newMatches[i].MatchID,
 					AccountID: accountID,
 				})

@@ -9,9 +9,8 @@ import (
 )
 
 type matchNotification struct {
-	Text     string
-	PhotoURL string
-	MatchID  int64
+	Text      string
+	MatchID   int64
 	AccountID int64
 }
 
@@ -185,7 +184,7 @@ func writeMatches(writer io.Writer, matches []recentMatch, heroes map[int]string
 	}
 }
 
-func formatMatchSummary(match recentMatch, heroes map[int]string) string {
+func formatMatchSummary(playerName string, match recentMatch, heroes map[int]string) string {
 	heroName := heroes[match.HeroID]
 	if heroName == "" {
 		heroName = fmt.Sprintf("Hero #%d", match.HeroID)
@@ -196,7 +195,7 @@ func formatMatchSummary(match recentMatch, heroes map[int]string) string {
 	}
 	duration := formatDuration(match.Duration)
 	kda := fmt.Sprintf("%d/%d/%d", match.Kills, match.Deaths, match.Assists)
-	return fmt.Sprintf("%s | %s | %s | %s", result, heroName, kda, duration)
+	return fmt.Sprintf("%s | %s | %s | %s | %s", result, fallbackName(playerName), heroName, kda, duration)
 }
 
 func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNotification, error) {
@@ -219,8 +218,7 @@ func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNoti
 		}
 
 		return matchNotification{
-			Text:      formatMatchSummary(matches[0], heroes),
-			PhotoURL:  player.AvatarFull,
+			Text:      formatMatchSummary(player.PersonaName, matches[0], heroes),
 			MatchID:   matches[0].MatchID,
 			AccountID: accountID,
 		}, nil
