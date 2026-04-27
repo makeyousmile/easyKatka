@@ -5,13 +5,38 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+type accountIDStore struct {
+	mu  sync.RWMutex
+	ids []int64
+}
+
+func newAccountIDStore(ids []int64) *accountIDStore {
+	store := &accountIDStore{}
+	store.Set(ids)
+	return store
+}
+
+func (s *accountIDStore) Get() []int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]int64(nil), s.ids...)
+}
+
+func (s *accountIDStore) Set(ids []int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ids = append([]int64(nil), ids...)
+}
 
 func Run() error {
 	accountIDs, err := loadAccountIDs("account_id")
 	if err != nil {
 		return err
 	}
+	accountStore := newAccountIDStore(accountIDs)
 
 	heroes, err := fetchHeroes()
 	if err != nil {
@@ -21,18 +46,18 @@ func Run() error {
 	telegramToken := strings.TrimSpace(os.Getenv(telegramTokenEnv))
 	if telegramToken != "" {
 		if notify := telegramNotifier(telegramToken); notify != nil {
-			go monitorMatches(accountIDs, heroes, notify)
+			go monitorMatches(accountStore, heroes, notify)
 		}
-		return runTelegramBot(telegramToken, accountIDs, heroes)
+		return runTelegramBot(telegramToken, accountStore, heroes)
 	}
 
-	report, err := buildReport(accountIDs, heroes)
+	report, err := buildReport(accountStore.Get(), heroes)
 	if err != nil {
 		return err
 	}
 	fmt.Print(report)
 
-	monitorMatches(accountIDs, heroes, nil)
+	monitorMatches(accountStore, heroes, nil)
 	return nil
 }
 

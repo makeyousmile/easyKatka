@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(matchNotification)) {
+func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify func(matchNotification)) {
+	accountIDs := accountStore.Get()
 	lastMatch := make(map[int64]int64, len(accountIDs))
 	names := make(map[int64]string, len(accountIDs))
 	if notify == nil {
@@ -34,7 +35,16 @@ func monitorMatches(accountIDs []int64, heroes map[int]string, notify func(match
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
+		accountIDs = accountStore.Get()
 		for _, accountID := range accountIDs {
+			if _, ok := names[accountID]; !ok {
+				player, err := fetchPlayerProfile(accountID)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "profile error: %s\n", err.Error())
+				} else {
+					names[accountID] = fallbackName(player.PersonaName)
+				}
+			}
 			matches, err := fetchRecentMatches(accountID)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "matches error: %s\n", err.Error())

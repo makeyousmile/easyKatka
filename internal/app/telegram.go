@@ -13,9 +13,9 @@ import (
 )
 
 type telegramUpdate struct {
-	UpdateID       int                   `json:"update_id"`
-	Message        *telegramMessage      `json:"message"`
-	CallbackQuery  *telegramCallbackQuery `json:"callback_query"`
+	UpdateID      int                    `json:"update_id"`
+	Message       *telegramMessage       `json:"message"`
+	CallbackQuery *telegramCallbackQuery `json:"callback_query"`
 }
 
 type telegramMessage struct {
@@ -40,7 +40,7 @@ type telegramUpdatesResponse struct {
 	Description string           `json:"description"`
 }
 
-func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) error {
+func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]string) error {
 	apiBase := fmt.Sprintf(telegramBaseURL, token)
 	offset := 0
 	for {
@@ -66,6 +66,7 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 			}
 			text := strings.TrimSpace(upd.Message.Text)
 			if isStatCommand(text) {
+				accountIDs := accountStore.Get()
 				for _, accountID := range accountIDs {
 					player, err := fetchPlayerProfile(accountID)
 					if err != nil {
@@ -107,7 +108,7 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 				continue
 			}
 			if isRatingCommand(text) {
-				table, err := buildRatingTable(accountIDs)
+				table, err := buildRatingTable(accountStore.Get())
 				if err != nil {
 					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
 					continue
@@ -125,7 +126,7 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
 					continue
 				}
-				table, err := buildBestFriendsTable(accountIDs, limit)
+				table, err := buildBestFriendsTable(accountStore.Get(), limit)
 				if err != nil {
 					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
 					continue
@@ -145,12 +146,24 @@ func runTelegramBot(token string, accountIDs []int64, heroes map[int]string) err
 				continue
 			}
 			if isTestCommand(text) {
-				msg, err := buildTestMatchSummary(accountIDs, heroes)
+				msg, err := buildTestMatchSummary(accountStore.Get(), heroes)
 				if err != nil {
 					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
 					continue
 				}
 				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg.Text, "", buildMatchDetailsMarkup(msg)); err != nil {
+					return err
+				}
+				continue
+			}
+			if isReloadAccsCommand(text) {
+				ids, err := loadAccountIDs("account_id")
+				if err != nil {
+					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка reload: %s", err.Error()), "", nil)
+					continue
+				}
+				accountStore.Set(ids)
+				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("account_id обновлён: %d аккаунтов", len(ids)), "", nil); err != nil {
 					return err
 				}
 				continue

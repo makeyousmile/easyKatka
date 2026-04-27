@@ -95,3 +95,18 @@ func isTestCommand(text string) bool {
 	}
 	return false
 }
+func isReloadAccsCommand(text string) bool {
+	if text == "" {
+		return false
+	}
+	if text == "/reload" {
+		return true
+	}
+	if strings.HasPrefix(text, "/reload@") {
+		return true
+	}
+	if strings.HasPrefix(text, "/reload ") {
+		return true
+	}
+	return false
+}
